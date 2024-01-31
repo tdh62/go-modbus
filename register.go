@@ -5,6 +5,7 @@ package modbus
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"sync"
 )
 
@@ -20,6 +21,18 @@ type NodeRegister struct {
 	input                               []uint16
 	holdingAddrStart                    uint16
 	holding                             []uint16
+	BeforeWriteCoilsHook                func(address uint16, quality uint16, buf []byte) bool
+	AfterWriteCoilsHook                 func(address uint16, quality uint16, buf []byte)
+	BeforeWriteDiscretesHook            func(address uint16, quality uint16, buf []byte) bool
+	AfterWriteDiscretesHook             func(address uint16, quality uint16, buf []byte)
+	BeforeWriteInputBytesHook           func(address uint16, quality uint16, buf []byte) bool
+	AfterWriteInputBytesHook            func(address uint16, quality uint16, buf []byte)
+	BeforeWriteHoldingsBytesHook        func(address uint16, quality uint16, buf []byte) bool
+	AfterWriteHoldingsBytesHook         func(address uint16, quality uint16, buf []byte)
+	BeforeWriteInputsHook               func(address uint16, buf []uint16) bool
+	AfterWriteInputsHook                func(address uint16, buf []uint16)
+	BeforeWriteHoldingsHook             func(address uint16, buf []uint16) bool
+	AfterWriteHoldingsHook              func(address uint16, buf []uint16)
 }
 
 // NewNodeRegister 创建一个modbus子节点寄存器列表
@@ -121,6 +134,9 @@ func setBits(buf []byte, start, nBits uint16, value byte) {
 
 // WriteCoils 写线圈
 func (sf *NodeRegister) WriteCoils(address, quality uint16, valBuf []byte) error {
+	if !beforeWriteCoilsHook(address, quality, valBuf) {
+		return errors.New("hooking function cancel write")
+	}
 	sf.rw.Lock()
 	if len(valBuf)*8 >= int(quality) && (address >= sf.coilsAddrStart) &&
 		((address + quality) <= (sf.coilsAddrStart + sf.coilsQuantity)) {
@@ -139,6 +155,7 @@ func (sf *NodeRegister) WriteCoils(address, quality uint16, valBuf []byte) error
 		return nil
 	}
 	sf.rw.Unlock()
+	afterWriteCoilsHook(address, quality, valBuf)
 	return &ExceptionError{ExceptionCodeIllegalDataAddress}
 }
 
@@ -185,6 +202,9 @@ func (sf *NodeRegister) ReadSingleCoil(address uint16) (bool, error) {
 
 // WriteDiscretes 写离散量
 func (sf *NodeRegister) WriteDiscretes(address, quality uint16, valBuf []byte) error {
+	if !beforeWriteDiscretesHook(address, quality, valBuf) {
+		return errors.New("hooking function cancel write")
+	}
 	sf.rw.Lock()
 	if len(valBuf)*8 >= int(quality) && (address >= sf.discreteAddrStart) &&
 		((address + quality) <= (sf.discreteAddrStart + sf.discreteQuantity)) {
@@ -203,6 +223,7 @@ func (sf *NodeRegister) WriteDiscretes(address, quality uint16, valBuf []byte) e
 		return nil
 	}
 	sf.rw.Unlock()
+	afterWriteDiscretesHook(address, quality, valBuf)
 	return &ExceptionError{ExceptionCodeIllegalDataAddress}
 }
 
@@ -249,6 +270,9 @@ func (sf *NodeRegister) ReadSingleDiscrete(address uint16) (bool, error) {
 
 // WriteHoldingsBytes 写保持寄存器
 func (sf *NodeRegister) WriteHoldingsBytes(address, quality uint16, valBuf []byte) error {
+	if !beforeWriteHoldingsBytesHook(address, quality, valBuf) {
+		return errors.New("hooking function cancel write")
+	}
 	sf.rw.Lock()
 	if len(valBuf) == int(quality*2) &&
 		(address >= sf.holdingAddrStart) &&
@@ -264,11 +288,15 @@ func (sf *NodeRegister) WriteHoldingsBytes(address, quality uint16, valBuf []byt
 		return nil
 	}
 	sf.rw.Unlock()
+	afterWriteHoldingsBytesHook(address, quality, valBuf)
 	return &ExceptionError{ExceptionCodeIllegalDataAddress}
 }
 
 // WriteHoldings 写保持寄存器
 func (sf *NodeRegister) WriteHoldings(address uint16, valBuf []uint16) error {
+	if !beforeWriteHoldingsHook(address, valBuf) {
+		return errors.New("hooking function cancel write")
+	}
 	quality := uint16(len(valBuf))
 	sf.rw.Lock()
 	if (address >= sf.holdingAddrStart) &&
@@ -280,6 +308,7 @@ func (sf *NodeRegister) WriteHoldings(address uint16, valBuf []uint16) error {
 		return nil
 	}
 	sf.rw.Unlock()
+	afterWriteHoldingsHook(address, valBuf)
 	return &ExceptionError{ExceptionCodeIllegalDataAddress}
 }
 
@@ -320,6 +349,9 @@ func (sf *NodeRegister) ReadHoldings(address, quality uint16) ([]uint16, error) 
 
 // WriteInputsBytes 写输入寄存器
 func (sf *NodeRegister) WriteInputsBytes(address, quality uint16, regBuf []byte) error {
+	if !beforeWriteInputBytesHook(address, quality, regBuf) {
+		return errors.New("hooking function cancel write")
+	}
 	sf.rw.Lock()
 	if len(regBuf) == int(quality*2) &&
 		(address >= sf.inputAddrStart) &&
@@ -335,12 +367,16 @@ func (sf *NodeRegister) WriteInputsBytes(address, quality uint16, regBuf []byte)
 		return nil
 	}
 	sf.rw.Unlock()
+	afterWriteInputBytesHook(address, quality, regBuf)
 	return &ExceptionError{ExceptionCodeIllegalDataAddress}
 }
 
 // WriteInputs 写输入寄存器
 func (sf *NodeRegister) WriteInputs(address uint16, valBuf []uint16) error {
 	quality := uint16(len(valBuf))
+	if !beforeWriteInputsHook(address, valBuf) {
+		return errors.New("hooking function cancel write")
+	}
 	sf.rw.Lock()
 	if (address >= sf.inputAddrStart) &&
 		((address + quality) <= (sf.inputAddrStart + uint16(len(sf.input)))) {
@@ -350,6 +386,7 @@ func (sf *NodeRegister) WriteInputs(address uint16, valBuf []uint16) error {
 		sf.rw.Unlock()
 		return nil
 	}
+	afterWriteInputsHook(address, valBuf)
 	sf.rw.Unlock()
 	return &ExceptionError{ExceptionCodeIllegalDataAddress}
 }
